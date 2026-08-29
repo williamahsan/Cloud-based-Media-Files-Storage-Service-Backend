@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import cookieParser from 'cookie-parser';
 import { supabase } from './lib/supabase.js';
 import authRoutes from './routes/auth.js';
+import fileRoutes from './routes/files.js';
 
 dotenv.config();
 
@@ -13,7 +14,9 @@ app.use(cors({ origin: process.env.CORS_ORIGIN, credentials: true }));
 app.use(express.json());
 app.use(cookieParser());
 
+// Routes
 app.use('/api/auth', authRoutes);
+app.use('/api/files', fileRoutes);
 
 // Health check and DB verification route
 app.get('/health', async (req, res) => {
