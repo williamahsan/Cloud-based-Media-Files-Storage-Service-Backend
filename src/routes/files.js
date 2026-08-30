@@ -90,4 +90,83 @@ router.post('/upload', requireAuth, uploadSingle, async (req, res) => {
   }
 });
 
+// PATCH /api/files/:id - Rename or Move file
+router.patch('/:id', requireAuth, async (req, res) => {
+  try {
+    const fileId = req.params.id;
+    const userId = req.user.userId;
+    const { name, folderId } = req.body;
+
+    const updates = {};
+    if (name) updates.name = name.trim();
+    if (folderId !== undefined) updates.folder_id = folderId || null;
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ error: { code: 'BAD_REQUEST', message: 'No fields provided to update' } });
+    }
+
+    const { data: file, error } = await supabase
+      .from('files')
+      .update(updates)
+      .eq('id', fileId)
+      .eq('owner_id', userId)
+      .select()
+      .single();
+
+    if (error || !file) {
+      return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'File not found' } });
+    }
+
+    // Log activity
+    await supabase.from('activities').insert([
+      {
+        actor_id: userId,
+        action: name ? 'rename' : 'move',
+        resource_type: 'file',
+        resource_id: fileId,
+        context: updates
+      }
+    ]);
+
+    res.json({ message: 'File updated successfully', file });
+  } catch (error) {
+    res.status(500).json({ error: { code: 'INTERNAL_SERVER_ERROR', message: error.message } });
+  }
+});
+
+// DELETE /api/files/:id - Soft delete file
+router.delete('/:id', requireAuth, async (req, res) => {
+  try {
+    const fileId = req.params.id;
+    const userId = req.user.userId;
+
+    const { data: file, error } = await supabase
+      .from('files')
+      .update({ is_deleted: true, updated_at: new Date().toISOString() })
+      .eq('id', fileId)
+      .eq('owner_id', userId)
+      .select()
+      .single();
+
+    if (error || !file) {
+      return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'File not found or already deleted' } });
+    }
+
+    // Log activity
+    await supabase.from('activities').insert([
+      {
+        actor_id: userId,
+        action: 'delete',
+        resource_type: 'file',
+        resource_id: fileId,
+        context: { name: file.name }
+      }
+    ]);
+
+    res.json({ message: 'File moved to Trash', fileId });
+  } catch (error) {
+    res.status(500).json({ error: { code: 'INTERNAL_SERVER_ERROR', message: error.message } });
+  }
+});
+
 export default router;
