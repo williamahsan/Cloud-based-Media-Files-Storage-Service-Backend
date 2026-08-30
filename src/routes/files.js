@@ -169,4 +169,70 @@ router.delete('/:id', requireAuth, async (req, res) => {
   }
 });
 
+// GET /api/files/:id - Fetch file details & short-lived signed download URL
+router.get('/:id', requireAuth, async (req, res) => {
+  try {
+    const fileId = req.params.id;
+    const userId = req.user.userId;
+
+    // 1. Fetch file record
+    const { data: file, error } = await supabase
+      .from('files')
+      .select('*')
+      .eq('id', fileId)
+      .eq('is_deleted', false)
+      .single();
+
+    if (error || !file) {
+      return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'File not found' } });
+    }
+
+    // 2. Check ACL: user must be Owner OR have a row in `shares`
+    let hasAccess = file.owner_id === userId;
+
+    if (!hasAccess) {
+      const { data: share } = await supabase
+        .from('shares')
+        .select('role')
+        .eq('resource_type', 'file')
+        .eq('resource_id', fileId)
+        .eq('grantee_user_id', userId)
+        .single();
+
+      if (share) hasAccess = true;
+    }
+
+    if (!hasAccess) {
+      return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Access denied to this file' } });
+    }
+
+    // 3. Generate 60-second signed URL for secure download
+    const { data: signedData, error: signErr } = await supabase.storage
+      .from(BUCKET_NAME)
+      .createSignedUrl(file.storage_key, 60, {
+        download: file.name
+      });
+
+    if (signErr) throw signErr;
+
+    // 4. Log download activity
+    await supabase.from('activities').insert([
+      {
+        actor_id: userId,
+        action: 'download',
+        resource_type: 'file',
+        resource_id: file.id,
+        context: { name: file.name }
+      }
+    ]);
+
+    res.json({
+      file,
+      signedUrl: signedData.signedUrl
+    });
+  } catch (error) {
+    res.status(500).json({ error: { code: 'INTERNAL_SERVER_ERROR', message: error.message } });
+  }
+});
+
 export default router;

@@ -7,6 +7,8 @@ import authRoutes from './routes/auth.js';
 import fileRoutes from './routes/files.js';
 import folderRoutes from './routes/folders.js';
 import trashRoutes from './routes/trash.js';
+import shareRoutes from './routes/shares.js';
+import linkShareRoutes from './routes/linkShares.js';
 
 dotenv.config();
 
@@ -21,6 +23,8 @@ app.use('/api/auth', authRoutes);
 app.use('/api/files', fileRoutes);
 app.use('/api/folders', folderRoutes);
 app.use('/api/trash', trashRoutes);
+app.use('/api/shares', shareRoutes);
+app.use('/api/link-shares', linkShareRoutes);
 
 // Health check and DB verification route
 app.get('/health', async (req, res) => {
