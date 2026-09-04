@@ -90,6 +90,30 @@ router.post('/upload', requireAuth, uploadSingle, async (req, res) => {
   }
 });
 
+// GET /api/files/recent - Fetch recently modified or uploaded files
+router.get('/recent', requireAuth, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const limit = parseInt(req.query.limit, 10) || 30;    
+
+    const { data: files, error } = await supabase
+      .from('files')
+      .select('*')
+      .eq('owner_id', userId)
+      .eq('is_deleted', false)
+      .order('updated_at', { ascending: false })
+      .limit(limit);
+
+    if (error) throw error;
+
+    res.json({ files: files || [] });
+  } catch (error) {
+    res.status(500).json({
+      error: { code: 'INTERNAL_SERVER_ERROR', message: error.message }
+    });
+  }
+});
+
 // PATCH /api/files/:id - Rename or Move file
 router.patch('/:id', requireAuth, async (req, res) => {
   try {

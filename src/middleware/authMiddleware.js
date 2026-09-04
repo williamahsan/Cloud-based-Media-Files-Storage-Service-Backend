@@ -1,4 +1,15 @@
-import { supabase } from '../lib/supabase.js';
+import { createClient } from '@supabase/supabase-js';
+
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
+
+// Dedicated, stateless client for user auth verification only
+const authVerifier = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: {
+    persistSession: false,
+    autoRefreshToken: false,
+  },
+});
 
 export const requireAuth = async (req, res, next) => {
   // 1. Extract the token from the httpOnly cookie
@@ -13,7 +24,7 @@ export const requireAuth = async (req, res, next) => {
 
   try {
     // 3. getUser() automatically verifies the RS256 signature and expiration
-    const { data: { user }, error } = await supabase.auth.getUser(token);
+    const { data: { user }, error } = await authVerifier.auth.getUser(token);
 
     if (error || !user) {
       return res.status(403).json({ 
