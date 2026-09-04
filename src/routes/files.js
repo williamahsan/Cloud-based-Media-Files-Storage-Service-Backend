@@ -235,4 +235,138 @@ router.get('/:id', requireAuth, async (req, res) => {
   }
 });
 
+// 1. POST /api/files/:id/version - Upload a new version of an existing file
+router.post('/:id/version', requireAuth, uploadSingle, async (req, res) => {
+  try {
+    const fileId = req.params.id;
+    const file = req.file;
+    const userId = req.user.userId;
+
+    if (!file) {
+      return res.status(400).json({ error: { code: 'BAD_REQUEST', message: 'No file provided' } });
+    }
+
+    // Verify ownership
+    const { data: existingFile, error: fetchErr } = await supabase
+      .from('files')
+      .select('*')
+      .eq('id', fileId)
+      .eq('owner_id', userId)
+      .eq('is_deleted', false)
+      .single();
+
+    if (fetchErr || !existingFile) {
+      return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'File not found' } });
+    }
+
+    // Determine current version count
+    const { count } = await supabase
+      .from('file_versions')
+      .select('*', { count: 'exact', head: true })
+      .eq('file_id', fileId);
+
+    const nextVersionNumber = (count || 0) + 1;
+
+    // Archive current file state into file_versions
+    await supabase.from('file_versions').insert([
+      {
+        file_id: fileId,
+        version_number: nextVersionNumber,
+        storage_key: existingFile.storage_key,
+        size_bytes: existingFile.size_bytes,
+        checksum: existingFile.checksum
+      }
+    ]);
+
+    // Upload new file to Supabase Storage
+    const checksum = crypto.createHash('sha256').update(file.buffer).digest('hex');
+    const newStorageKey = `tenants/${userId}/files/${crypto.randomUUID()}-${file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
+
+    const { error: storageErr } = await supabase.storage
+      .from(BUCKET_NAME)
+      .upload(newStorageKey, file.buffer, { contentType: file.mimetype });
+
+    if (storageErr) throw storageErr;
+
+    // Update the base file record
+    const { data: updatedFile, error: updateErr } = await supabase
+      .from('files')
+      .update({
+        storage_key: newStorageKey,
+        size_bytes: file.size,
+        mime_type: file.mimetype,
+        checksum,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', fileId)
+      .select()
+      .single();
+
+    if (updateErr) throw updateErr;
+
+    res.json({ message: 'New version uploaded successfully', file: updatedFile });
+  } catch (error) {
+    res.status(500).json({ error: { code: 'INTERNAL_SERVER_ERROR', message: error.message } });
+  }
+});
+
+// 2. GET /api/files/:id/versions - List version history
+router.get('/:id/versions', requireAuth, async (req, res) => {
+  try {
+    const fileId = req.params.id;
+    const userId = req.user.userId;
+
+    const { data: versions, error } = await supabase
+      .from('file_versions')
+      .select('*')
+      .eq('file_id', fileId)
+      .order('version_number', { ascending: false });
+
+    if (error) throw error;
+
+    res.json({ versions: versions || [] });
+  } catch (error) {
+    res.status(500).json({ error: { code: 'INTERNAL_SERVER_ERROR', message: error.message } });
+  }
+});
+
+// 3. POST /api/files/:id/revert - Revert file to a previous version
+router.post('/:id/revert', requireAuth, async (req, res) => {
+  try {
+    const fileId = req.params.id;
+    const { versionId } = req.body;
+    const userId = req.user.userId;
+
+    const { data: targetVersion, error: vErr } = await supabase
+      .from('file_versions')
+      .select('*')
+      .eq('id', versionId)
+      .eq('file_id', fileId)
+      .single();
+
+    if (vErr || !targetVersion) {
+      return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Version not found' } });
+    }
+
+    const { data: updatedFile, error: updateErr } = await supabase
+      .from('files')
+      .update({
+        storage_key: targetVersion.storage_key,
+        size_bytes: targetVersion.size_bytes,
+        checksum: targetVersion.checksum,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', fileId)
+      .eq('owner_id', userId)
+      .select()
+      .single();
+
+    if (updateErr) throw updateErr;
+
+    res.json({ message: 'File reverted successfully', file: updatedFile });
+  } catch (error) {
+    res.status(500).json({ error: { code: 'INTERNAL_SERVER_ERROR', message: error.message } });
+  }
+});
+
 export default router;
